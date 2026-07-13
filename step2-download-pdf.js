@@ -22,12 +22,24 @@ const { URL } = require('url');
 const { getImapConfig, getMailbox } = require('./lib/env');
 const { safeCleanDir } = require('./lib/safe-clean');
 
-// 兜底：任何未捕获的 Promise rejection / 异常 只记录，不中断流水线（下载单封或 teardown 失败不应崩全局）
+// E (工序达 review): 致命 / 可恢复错误细分
+// 单封发票错误已在主循环内 try/catch 捕获并记入 failed[]，不会逃逸到此；
+// 因此逃逸到全局 handler 的未处理错误默认视为「全局不可恢复 = 致命」，应退出(1)。
+// 仅 IMAP 库在连接主动关闭后的异步清理噪声（Connection closed 等）允许继续，避免假失败。
+const { isFatalError } = require('./lib/error-classify');
 process.on('unhandledRejection', (reason) => {
-  console.error('⚠️ 未捕获的 Promise rejection（已记录，不中断）:', reason && (reason.stack || reason.message || reason));
+  if (isFatalError(reason)) {
+    console.error('❌ [FATAL] 未捕获的 Promise rejection（致命，流水线终止）:', reason && (reason.stack || reason.message || reason));
+    process.exit(1);
+  }
+  console.error('⚠️ 未捕获的 Promise rejection（良性噪声，已记录不中断）:', reason && (reason.stack || reason.message || reason));
 });
 process.on('uncaughtException', (err) => {
-  console.error('⚠️ 未捕获异常（已记录，不中断）:', err && err.message);
+  if (isFatalError(err)) {
+    console.error('❌ [FATAL] 未捕获异常（致命，流水线终止）:', err && (err.stack || err.message));
+    process.exit(1);
+  }
+  console.error('⚠️ 未捕获异常（良性噪声，已记录不中断）:', err && err.message);
 });
 
 const args = process.argv.slice(2);
@@ -565,7 +577,11 @@ async function main() {
       }
     }
     } catch (fatal) {
-      console.error('❌ 下载主循环未预期错误（已兜底，继续生成报告）:', fatal && fatal.message);
+      // E: 主循环未预期错误 = 全局不可恢复，应终止而非生成残缺报告（避免「看似成功」）
+      console.error('❌ [FATAL] 下载主循环未预期错误（致命，流水线终止）:', fatal && (fatal.stack || fatal.message));
+      clearInterval(heartbeat);
+      try { imap.end(); } catch (_) {}
+      process.exit(1);
     } finally {
       clearInterval(heartbeat);
       try { imap.end(); } catch (_) {}
