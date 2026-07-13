@@ -1,0 +1,39 @@
+{
+  "_说明": "发票按客户/项目归类映射。rules 按数组顺序匹配，命中第一条即停。match 为关键字数组（匹配范围：销售方名称 + 邮件主题 + 发票正文前500字，任一包含即命中）。clientType=客户类型，固定三分类：企业客户 / 政府及事业单位 / 个人及其他。clientNo=客户编号，projectNo=项目号。未命中任何规则走 fallback（标为「未分类」，并记入 attribution-tasks 待归类清单，不会静默丢失）。\n\n填写方法：把每条规则里的 match 换成你真实客户在发票/邮件里出现的名称或关键词，clientNo / projectNo 换成你财务系统的真实编号。下面三类各留了示例/占位，替换成真实值即可。带【】的是占位符，不会命中任何真实发票，替换前可放心留着。",
+  "defaultClientType": "企业客户",
+  "rules": [
+    {
+      "match": ["示例科技", "Example Tech"],
+      "clientType": "企业客户",
+      "clientNo": "C-001",
+      "projectNo": "P-2026-001",
+      "note": "示例：已可跑，替换成你的真实企业客户"
+    },
+    {
+      "match": ["【企业客户B名称关键词】"],
+      "clientType": "企业客户",
+      "clientNo": "C-002",
+      "projectNo": "P-2026-002",
+      "note": "占位：替换为真实企业客户B"
+    },
+    {
+      "match": ["【政府/事业单位名称关键词】"],
+      "clientType": "政府及事业单位",
+      "clientNo": "G-001",
+      "projectNo": "P-2026-G01",
+      "note": "占位：替换为真实政府/事业单位客户"
+    },
+    {
+      "match": ["【个人客户名称或微信名关键词】"],
+      "clientType": "个人及其他",
+      "clientNo": "P-001",
+      "projectNo": "P-2026-P01",
+      "note": "占位：替换为真实个人客户"
+    }
+  ],
+  "fallback": {
+    "clientType": "未分类",
+    "clientNo": "未分类",
+    "projectNo": "未分类"
+  }
+}

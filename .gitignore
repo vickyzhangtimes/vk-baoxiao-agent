@@ -1,0 +1,18 @@
+node_modules/
+scan-results/
+archive/
+.env
+config/IMAP_CREDENTIALS.js
+config/mailboxes.json
+config/package-config.js
+
+# internal-only / sanitize artifacts
+_audit.js
+*.safe.bak
+
+# E2E / 临时测试产物
+_e2e*
+_e2e_tmp/
+
+# 用户模板（可能含真实公司名/成本中心/审批人，不进库）
+templates/
