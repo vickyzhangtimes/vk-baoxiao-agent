@@ -17,10 +17,19 @@
  */
 const { spawnSync } = require('child_process');
 const path = require('path');
+const { isStepDirty } = require('./lib/pipeline-dirty');
 const fs = require('fs');
 const os = require('os');
 const { loadDotEnv } = require('./lib/env');
 const { buildTemplateRenderStep } = require('./lib/pipeline-template-step');
+const { appendEvent } = require('./lib/run-journal');
+const { safeSegment } = require('./lib/path-guard');
+
+if (process.env.REIMBURSE_AGENT_CONTROLLER !== '1') {
+  console.error('run-all.js 是内部确定性流水线，请通过 `npm run agent -- ...` 启动并完成权限确认。');
+  console.error('仅限开发调试时可显式设置 REIMBURSE_AGENT_CONTROLLER=1。');
+  process.exit(3);
+}
 
 loadDotEnv();
 
@@ -64,8 +73,8 @@ const scanDir = path.join(root, 'scan-results');
 
 // export 输出目录（与 export-to-edrive.js 同公式，用于脏检查）
 const REIMBURSE_ROOT = process.env.REIMBURSE_ROOT || path.join(os.homedir(), '报销');
-const BATCH_DATE = process.env.BATCH_DATE || new Date().toISOString().slice(0, 10);
-const PERIOD_LABEL = process.env.PERIOD_LABEL || '报销批次';
+const BATCH_DATE = safeSegment(process.env.BATCH_DATE || new Date().toISOString().slice(0, 10), 'BATCH_DATE');
+const PERIOD_LABEL = safeSegment(process.env.PERIOD_LABEL || '报销批次', 'PERIOD_LABEL');
 const batchDir = path.join(REIMBURSE_ROOT, `${BATCH_DATE}_${PERIOD_LABEL}`);
 
 // ---- 路径快捷 ----
@@ -164,15 +173,13 @@ function buildSteps() {
 // ---- 脏检查 ----
 function mtime(p) { try { return fs.statSync(p).mtimeMs; } catch (e) { return 0; } }
 function isDirty(s) {
-  const outM = Math.max(...s.outputs.map(mtime));
-  if (outM === 0) return true; // 无输出 → 必跑
-  for (const inp of s.inputs) { if (mtime(inp) > outM) return true; }
-  return false;
+  return isStepDirty(fs, s);
 }
 
 // ---- 步骤执行 ----
 function runStep(label, script, scriptArgs, key) {
   console.log(`\n[${label}] node ${script} ${scriptArgs.join(' ')}`);
+  appendEvent(process.env.REIMBURSE_RUN_RECORD, { type: 'step', key, label, status: 'running' });
   const childEnv = Object.assign({}, process.env);
   // 流水线批量清理可再生工作目录时，移除 safe-delete shim 的环境变量（仍安全移入回收站，不崩溃）
   delete childEnv.CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR;
@@ -182,8 +189,15 @@ function runStep(label, script, scriptArgs, key) {
     // D3: 按步 key 可配超时；download 步（邮箱批量下载）默认放宽到 60 分钟，避免大邮箱被全局 15 分钟超时被 kill（表现为「跑一半死」）
     timeout: Number(process.env['STEP_TIMEOUT_MS_' + (key ? key.toUpperCase() : 'X')] || process.env.PIPELINE_STEP_TIMEOUT_MS || (key === 'download' ? 3600000 : 900000)),
   });
-  if (result.error) { console.error(`${label} failed: ${result.error.message}`); return false; }
-  if (result.status !== 0) { console.error(`${label} exited with code ${result.status}`); return false; }
+  if (result.error) {
+    appendEvent(process.env.REIMBURSE_RUN_RECORD, { type: 'step', key, label, status: 'failed', error: result.error.message });
+    console.error(`${label} failed: ${result.error.message}`); return false;
+  }
+  if (result.status !== 0) {
+    appendEvent(process.env.REIMBURSE_RUN_RECORD, { type: 'step', key, label, status: 'failed', exitCode: result.status });
+    console.error(`${label} exited with code ${result.status}`); return false;
+  }
+  appendEvent(process.env.REIMBURSE_RUN_RECORD, { type: 'step', key, label, status: 'completed' });
   return true;
 }
 

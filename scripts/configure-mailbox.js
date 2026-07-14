@@ -61,7 +61,7 @@ function writeEnv(values) {
     `IMAP_HOST=${values.IMAP_HOST || 'imap.qq.com'}`,
     `IMAP_PORT=${values.IMAP_PORT || '993'}`,
     `IMAP_TLS=${values.IMAP_TLS || 'true'}`,
-    `IMAP_REJECT_UNAUTHORIZED=${values.IMAP_REJECT_UNAUTHORIZED || 'false'}`,
+    `IMAP_REJECT_UNAUTHORIZED=${values.IMAP_REJECT_UNAUTHORIZED || 'true'}`,
     `MAILBOX=${values.MAILBOX || 'INBOX'}`,
     `MAIL_WEB_USER=${values.MAIL_WEB_USER || (values.IMAP_USER || '').split('@')[0] || ''}`,
     '',

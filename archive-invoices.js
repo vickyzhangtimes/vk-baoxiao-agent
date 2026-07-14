@@ -96,7 +96,7 @@ function uniquePath(file) {
 }
 
 function resetDir(dir) {
-  safeCleanDir(dir); // 安全清空（兼容 WorkBuddy safe-delete 批量 guard，失败不中断）
+  safeCleanDir(dir, { allowedRoot: ROOT });
   fs.mkdirSync(dir, { recursive: true });
 }
 
@@ -109,10 +109,15 @@ function linkFlatPdf(record) {
     return flatPath;
   } catch (_) {
     // 兜底：如果硬链接失败，创建 Windows/浏览器都能识别的 URL 指针，不复制 PDF 数据。
-    const pointerPath = flatPath.replace(/\.pdf$/i, '.url');
-    const targetUrl = 'file:///' + record.targetPath.replace(/\\/g, '/');
-    fs.writeFileSync(pointerPath, `[InternetShortcut]\nURL=${targetUrl}\n`, 'utf8');
-    return pointerPath;
+    try {
+      const pointerPath = flatPath.replace(/\.pdf$/i, '.url');
+      const targetUrl = 'file:///' + record.targetPath.replace(/\\/g, '/');
+      fs.writeFileSync(pointerPath, `[InternetShortcut]\nURL=${targetUrl}\n`, 'utf8');
+      return pointerPath;
+    } catch (e2) {
+      console.warn('⚠️ 平铺链接失败（已跳过）', flatPath, e2.message);
+      return null;
+    }
   }
 }
 
@@ -247,6 +252,7 @@ function main() {
   const downloadData = JSON.parse(fs.readFileSync(downloadFile, 'utf8'));
   const byUid = new Map((finalData.data || []).map(r => [String(r.emailUid), r]));
   fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+  resetDir(ALL_PDF_DIR);
 
   const records = [];
   const anomalies = [];
@@ -309,7 +315,6 @@ function main() {
     return;
   }
 
-  resetDir(ALL_PDF_DIR);
   const manifest = {
     generatedAt: new Date().toISOString(),
     sourceFinalFile: path.relative(ROOT, finalFile),

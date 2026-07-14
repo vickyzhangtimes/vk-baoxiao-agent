@@ -2,9 +2,12 @@ MIT License
 
 Copyright (c) 2026 the reimbursement-invoice-pipeline contributors
 
-This project is a customized, open-source fork of the MIT-licensed
-`company-reimbursement-invoice-email-assistant` skill. The original work is
-Copyright (c) the upstream author and licensed under MIT.
+This project is a customized fork of the MIT-licensed
+`company-reimbursement-invoice-email-assistant` skill published by peter-zx
+(aigc猎手竹相左边):
+https://clawhub.ai/peter-zx/company-reimbursement-invoice-email-assistant
+
+Original work Copyright (c) 2026 peter-zx / aigc猎手竹相左边.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

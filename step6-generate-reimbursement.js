@@ -23,6 +23,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { isInvoiceRecord, formatRoute } = require('./lib/record-utils');
 const { loadPackageConfig } = require('./lib/load-package-config');
 
 const args = process.argv.slice(2);
@@ -93,8 +94,9 @@ async function generateReimbursement() {
   const meta = data.meta || {};
   const PKG = loadPackageConfig();
 
-  const detailRows = records.filter(r => r.amount && !r.needsManualReview);
-  const pendingRows = records.filter(r => r.needsManualReview);
+  const invoiceRecords = records.filter(isInvoiceRecord);
+  const detailRows = invoiceRecords.filter(r => r.amount && !r.needsManualReview);
+  const pendingRows = invoiceRecords.filter(r => r.needsManualReview);
 
   // 按费用类别分组（固定顺序：餐饮招待优先等）
   const CAT_ORDER = ['餐饮招待', '差旅交通', '住宿', '通讯费', '员工福利', '办公采购', '软件订阅', '市场推广', '个人消费', '其他'];
@@ -219,10 +221,14 @@ async function generateReimbursement() {
       row.getCell(5).value = r.invoiceNo || '';
       row.getCell(6).value = amt(r);
       row.getCell(7).value = r.notes || '';
-      row.getCell(8).value = r.transportType || '';
+      row.getCell(8).value = [r.transportType, r.flightNo].filter(Boolean).join(' / ');
       row.getCell(9).value = r.tripDate || '';
-      const tripStr = (r.fromStation || r.toStation) ? `${r.fromStation || ''} → ${r.toStation || ''}` : '';
+      const tripStr = formatRoute(r);
       row.getCell(10).value = tripStr;
+      if (tripStr.includes('\n')) {
+        row.getCell(10).alignment = { wrapText: true, vertical: 'top' };
+        row.height = Math.max(row.height || 0, 15 * (r.legs.length + 1));
+      }
 
       // 行边框 + 交替底色
       for (let c = 1; c <= 10; c++) {

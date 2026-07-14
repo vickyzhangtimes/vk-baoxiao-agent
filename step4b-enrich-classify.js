@@ -34,13 +34,14 @@ const PROJECT_MAP = require('./config/project-mapping.json');
 
 function loadOverrides() {
   const file = path.join(__dirname, 'config', 'invoice-overrides.json');
-  if (!fs.existsSync(file)) return {};
+  const memoryFile = path.join(__dirname, 'agent-memory', 'invoice-overrides.json');
   try {
-    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const data = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
     delete data._说明;
-    return data;
+    const learned = fs.existsSync(memoryFile) ? JSON.parse(fs.readFileSync(memoryFile, 'utf8')) : {};
+    return { ...data, ...learned };
   } catch (e) {
-    console.warn('⚠ 读取 invoice-overrides.json 失败，跳过手动覆盖: ' + e.message);
+    console.warn('⚠ 读取发票覆盖配置失败，跳过手动覆盖: ' + e.message);
     return {};
   }
 }
@@ -114,7 +115,7 @@ function syncEnrichmentToTable(records, scanDir, finalFile) {
   const ENRICH_FIELDS = ['category', 'clientType', 'clientNo', 'projectNo', 'attributionStatus', 'month',
     // 差旅结构化字段：step4 已从行程单抽出，必须同步回 canonical invoice-table，
     // 否则 dashboard / export 读 invoice-table 时看不到起点终点（防回归）
-    'transportType', 'tripDate', 'fromStation', 'toStation', 'tripUncertain'];
+    'transportType', 'tripDate', 'flightNo', 'fromStation', 'toStation', 'tripUncertain', 'legs'];
   try {
     const tData = JSON.parse(fs.readFileSync(tableFile, 'utf8'));
     const tRecords = Array.isArray(tData) ? tData : (tData.data || []);

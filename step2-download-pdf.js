@@ -21,6 +21,7 @@ const { spawnSync } = require('child_process');
 const { URL } = require('url');
 const { getImapConfig, getMailbox } = require('./lib/env');
 const { safeCleanDir } = require('./lib/safe-clean');
+const { assertAllowedRemoteUrl, safeLookup, collectResponse } = require('./lib/url-policy');
 
 // E (工序达 review): 致命 / 可恢复错误细分
 // 单封发票错误已在主循环内 try/catch 捕获并记入 failed[]，不会逃逸到此；
@@ -155,34 +156,34 @@ async function ensureImapAlive(im) {
 /**
  * 从 URL 下载文件
  */
-function downloadFile(fileUrl, destPath) {
+function downloadFile(fileUrl, destPath, depth = 0) {
   return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(fileUrl);
+    if (depth > 5) return reject(new Error('重定向次数超过 5 次'));
+    const parsedUrl = assertAllowedRemoteUrl(fileUrl);
     const protocol = parsedUrl.protocol === 'https:' ? https : http;
     const options = {
       hostname: parsedUrl.hostname,
       path: parsedUrl.pathname + parsedUrl.search,
       method: 'GET',
       family: 4,
+      lookup: safeLookup,
       headers: { 'User-Agent': 'Mozilla/5.0' },
       timeout: 20000,
     };
     const req = protocol.request(options, res => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        // 重定向
-        downloadFile(new URL(res.headers.location, fileUrl).href, destPath).then(resolve).catch(reject);
+        res.resume();
+        downloadFile(new URL(res.headers.location, fileUrl).href, destPath, depth + 1).then(resolve).catch(reject);
         return;
       }
       if (res.statusCode !== 200) {
+        res.resume();
         reject(new Error(`HTTP ${res.statusCode}`)); return;
       }
-      const bufs = [];
-      res.on('data', c => bufs.push(c));
-      res.on('end', () => {
-        const data = Buffer.concat(bufs);
+      collectResponse(res).then(data => {
         fs.writeFileSync(destPath, data);
         resolve(data.length);
-      });
+      }).catch(reject);
     });
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
@@ -192,13 +193,15 @@ function downloadFile(fileUrl, destPath) {
 
 function fetchUrl(fileUrl, depth = 0) {
   return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(fileUrl);
+    if (depth > 5) return reject(new Error('重定向次数超过 5 次'));
+    const parsedUrl = assertAllowedRemoteUrl(fileUrl);
     const protocol = parsedUrl.protocol === 'https:' ? https : http;
     const options = {
       hostname: parsedUrl.hostname,
       path: parsedUrl.pathname + parsedUrl.search,
       method: 'GET',
       family: 4,
+      lookup: safeLookup,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf,*/*;q=0.8',
@@ -207,18 +210,17 @@ function fetchUrl(fileUrl, depth = 0) {
       timeout: 20000,
     };
     const req = protocol.request(options, res => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && depth < 5) {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
         fetchUrl(new URL(res.headers.location, fileUrl).href, depth + 1).then(resolve).catch(reject);
         return;
       }
-      const bufs = [];
-      res.on('data', c => bufs.push(c));
-      res.on('end', () => resolve({
+      collectResponse(res).then(body => resolve({
         url: fileUrl,
         statusCode: res.statusCode,
         headers: res.headers,
-        body: Buffer.concat(bufs),
-      }));
+        body,
+      })).catch(reject);
     });
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
@@ -228,13 +230,14 @@ function fetchUrl(fileUrl, depth = 0) {
 
 function postForm(url, data, referer) {
   return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(url);
+    const parsedUrl = assertAllowedRemoteUrl(url);
     const protocol = parsedUrl.protocol === 'https:' ? https : http;
     const body = new URLSearchParams(data).toString();
     const options = {
       hostname: parsedUrl.hostname,
       path: parsedUrl.pathname + parsedUrl.search,
       method: 'POST',
+      lookup: safeLookup,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36',
         'Accept': 'application/json, text/plain, */*',
@@ -246,14 +249,12 @@ function postForm(url, data, referer) {
       timeout: 20000,
     };
     const req = protocol.request(options, res => {
-      const bufs = [];
-      res.on('data', c => bufs.push(c));
-      res.on('end', () => resolve({
+      collectResponse(res).then(responseBody => resolve({
         url,
         statusCode: res.statusCode,
         headers: res.headers,
-        body: Buffer.concat(bufs),
-      }));
+        body: responseBody,
+      })).catch(reject);
     });
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
@@ -268,6 +269,8 @@ function isPdfResponse(response) {
 }
 
 function fetchUrlWithCurl(fileUrl, ext) {
+  if (process.env.ENABLE_CURL_FALLBACK !== '1') return null;
+  assertAllowedRemoteUrl(fileUrl);
   const curl = process.platform === 'win32' ? 'curl.exe' : 'curl';
   const maxTime = Number(process.env.CURL_MAX_TIME || 60);
   let result;
@@ -430,7 +433,7 @@ function guessInvoiceNoFromFilename(filename) {
 }
 
 async function main() {
-  safeCleanDir(STAGING_DIR);
+  safeCleanDir(STAGING_DIR, { allowedRoot: ROOT });
   if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
   if (!fs.existsSync(PDF_DIR)) fs.mkdirSync(PDF_DIR, { recursive: true });
   if (!fs.existsSync(OFD_DIR)) fs.mkdirSync(OFD_DIR, { recursive: true });

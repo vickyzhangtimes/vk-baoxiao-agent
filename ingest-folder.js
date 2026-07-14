@@ -22,6 +22,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { stagePdfs } = require('./lib/folder-intake');
 
 const folder = process.argv[2];
 const dateTag = process.argv[3] || ('local-' + new Date().toISOString().slice(0, 10).replace(/-/g, ''));
@@ -62,19 +63,17 @@ if (pdfs.length === 0) {
   process.exit(1);
 }
 
-// 复制进 staging（跨盘用复制最稳；硬链接跨盘会失败）
-for (const src of pdfs) {
-  fs.copyFileSync(src, path.join(stagingDir, path.basename(src)));
-}
-console.log(`已复制 ${pdfs.length} 个 PDF 到 ${stagingDir}`);
+// 内容哈希去重 + 哈希前缀命名，防止不同子目录的同名文件互相覆盖。
+const intake = stagePdfs(pdfs, absFolder, stagingDir);
+console.log(`已收件  个 PDF 到 （去重  个）`);
 
 // 合成 emails / classified / downloads（一封邮件 = 一个 PDF 附件）
 const emails = [];
 const classifiedRecords = [];
 const downloaded = [];
-pdfs.forEach((src, i) => {
+intake.staged.forEach((item, i) => {
   const uid = i + 1;
-  const filename = path.basename(src);
+  const filename = item.stagedFilename;
   emails.push({
     uid,
     subject: filename,
@@ -83,14 +82,16 @@ pdfs.forEach((src, i) => {
     status: 'downloaded',
     attachments: [{ filename, type: 'pdf' }],
     links: [],
+    sourceRelativePath: item.sourceRelativePath,
+    sourceSha256: item.sha256,
   });
   classifiedRecords.push({ uid, sourceType: 'attachment_pdf', expectedAction: 'download', platform: null });
-  downloaded.push({ uid, filename, path: path.join(stagingDir, filename), type: 'pdf', resolver: 'local-folder', status: 'downloaded' });
+  downloaded.push({ uid, filename, originalFilename: item.originalFilename, sourceRelativePath: item.sourceRelativePath, sourceSha256: item.sha256, path: path.join(stagingDir, filename), type: 'pdf', resolver: 'local-folder', status: 'downloaded' });
 });
 
 const emailsOut = { meta: { dateTag, startDate: null, endDate: null, total: emails.length, source: 'local-folder' }, emails };
 const classifiedOut = { meta: { dateTag }, records: classifiedRecords };
-const downloadOut = { meta: { dateTag }, downloaded };
+const downloadOut = { meta: { dateTag, duplicates: intake.duplicates }, downloaded };
 
 fs.mkdirSync(path.join(root, 'scan-results', 'emails'), { recursive: true });
 fs.mkdirSync(path.join(root, 'scan-results', 'classified'), { recursive: true });
@@ -99,5 +100,5 @@ fs.writeFileSync(path.join(root, 'scan-results', 'emails', `emails-${dateTag}.js
 fs.writeFileSync(path.join(root, 'scan-results', 'classified', `classified-${dateTag}.json`), JSON.stringify(classifiedOut, null, 2), 'utf8');
 fs.writeFileSync(path.join(root, 'scan-results', 'downloads', `download-results-${dateTag}.json`), JSON.stringify(downloadOut, null, 2), 'utf8');
 
-console.log(`✅ 合成记录已生成: ${emails.length} 张发票, dateTag=${dateTag}`);
+console.log(`✅ 合成记录已生成: ${emails.length} 份 PDF 文档, dateTag=${dateTag}`);
 console.log('   下一步: 直接跑 step3..step11，或用 `npm run run -- --folder "<路径>"` 一键串联');

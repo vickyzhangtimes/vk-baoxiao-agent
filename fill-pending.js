@@ -24,6 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { isInvoiceRecord, serializeRouteLegs, parseRouteLegs } = require('./lib/record-utils');
 
 const ROOT = __dirname;
 const SCAN_DIR = path.join(ROOT, 'scan-results');
@@ -98,9 +99,9 @@ function initCsv(dateTag) {
   const data = JSON.parse(fs.readFileSync(finalFile, 'utf8'));
   // 待填写范围：需人工 / 无金额 / 行程字段待复核(tripUncertain)
   const records = (data.data || []).filter(r =>
-    r.needsManualReview || !(Number(r.amount) > 0) || r.tripUncertain);
+    r.needsManualReview || (isInvoiceRecord(r) && !(Number(r.amount) > 0)) || r.tripUncertain);
   const header = ['emailUid', 'seller', 'subject', 'knownAmount', 'invoiceNo', 'invoiceDate', 'buyer',
-    'transportType', 'tripDate', 'fromStation', 'toStation', 'pdfPath', 'note'];
+    'transportType', 'tripDate', 'fromStation', 'toStation', 'routeLegs', 'pdfPath', 'note'];
   const rows = [header];
   for (const r of records) {
     rows.push([
@@ -115,6 +116,7 @@ function initCsv(dateTag) {
       r.tripDate || '',
       r.fromStation || '',
       r.toStation || '',
+      serializeRouteLegs(r),
       '', // pdfPath 留空待填
       r.manualReason || (r.tripUncertain ? '⚠️ 行程字段待复核' : ''),
     ]);
@@ -153,6 +155,7 @@ function applyCsv(dateTag) {
     if (get('tripDate')) o.tripDate = get('tripDate');
     if (get('fromStation')) o.fromStation = get('fromStation');
     if (get('toStation')) o.toStation = get('toStation');
+    if (get('routeLegs')) o.legs = parseRouteLegs(get('routeLegs'));
     // 手动 PDF
     const pdfPath = get('pdfPath');
     if (pdfPath && fs.existsSync(pdfPath)) {

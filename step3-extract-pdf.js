@@ -19,6 +19,7 @@ const PDFParser = require('pdf2json');
 const config = require('./config/BUYER_MAP');
 const { extractTravel } = require('./lib/extract-travel');
 const { deriveInvoiceType } = require('./lib/invoice-fields');
+const { inferRecordRole } = require('./lib/record-utils');
 
 const args = process.argv.slice(2);
 const dateTag = args[0] || '';
@@ -122,7 +123,7 @@ function extractDigitalInvoice(t, filename) {
   if (money.length) info.amount = Math.max(...money).toFixed(2);
   if (!info.amount) {
     const fileAmount = filename.match(/(?:金额|价税合计)?([0-9]{1,6}\.\d{2})/);
-    if (fileAmount) info.amount = Number(fileAmount[1]).toFixed(2);
+    if (fileAmount) { info.amountCandidate = Number(fileAmount[1]).toFixed(2); info.amountCandidateSource = 'filename'; }
   }
   if (money.length >= 2 && info.amount) {
     const lessThanAmount = money.filter(n => n < Number(info.amount));
@@ -222,9 +223,22 @@ function extractSpacedDigital(t, filename) {
   if (amtMatch) {
     info.amount = amtMatch[1].replace(/,/g, '');
   } else {
-    // 备选：从文件名提取金额
-    const fnAmt = filename.match(/(?:^|[^\d])(\d{1,6}\.\d{2})\.pdf$/i);
-    if (fnAmt) info.amount = fnAmt[1];
+    // 数电发票常见「合计 ¥金额 ¥税额」两联金额（如高德/携华打车 *运输服务*客运服务费发票）。
+    // 例: raw = "合计¥38.65¥1.16" → 价税合计 = 38.65 + 1.16 = 39.81
+    const heji = raw.match(/合计[¥￥]\s*([0-9,]+\.?[0-9]*)[¥￥]\s*([0-9,]+\.?[0-9]*)/);
+    if (heji) {
+      const a = Number(heji[1].replace(/,/g, ''));
+      const b = Number(heji[2].replace(/,/g, ''));
+      if (a > 0 && b >= 0 && Number.isFinite(a + b)) {
+        info.amount = (a + b).toFixed(2);
+        info.amountSource = 'pdf';
+      }
+    }
+    // 兜底：从文件名提取金额（仅作候选，step4 经用户授权后转正）
+    if (!info.amount) {
+      const fnAmt = filename.match(/(?:^|[^\d])(\d{1,6}\.\d{2})\.pdf$/i);
+      if (fnAmt) { info.amountCandidate = fnAmt[1]; info.amountCandidateSource = 'filename'; }
+    }
   }
 
   // 购买方名称（已从raw移除空格，直接匹配）
@@ -302,6 +316,22 @@ function extractNormalPDF(t, filename) {
 
   info._extracted = '普通PDF';
   info.invoiceType = deriveInvoiceType(t, info.docType);
+  return info;
+}
+
+// 统一文件名金额兜底：仅在 PDF 正文未抽到金额时触发，绝不覆盖真实抽取值。
+// 优先匹配带「元」字（携华等打车发票文件名：...-12.49元-...pdf），避免误匹配日期 2024.11；
+// 退而求其次匹配紧邻 .pdf 的 X.XX。来源标记为 filename，并留置人工复核（不擅自当真值）。
+function fallbackAmountFromFilename(info, filename) {
+  if (info.amount) return info;
+  const m = filename.match(/(\d{1,6}\.\d{2})\s*元/i) || filename.match(/(\d{1,6}\.\d{2})(?=\.pdf)/i);
+  if (m) {
+    const amt = Number(m[1]);
+    if (amt > 0 && amt < 100000) {
+      info.amountCandidate = amt.toFixed(2);
+      info.amountCandidateSource = 'filename';
+    }
+  }
   return info;
 }
 
@@ -416,6 +446,10 @@ async function extractPdfs() {
 
       // 行程/差旅结构化字段（火车票自动抽；打车仅 transportType，站名走手动填）
       info.travel = extractTravel({ fullText, docType: info.docType, seller: info.seller });
+      info.recordRole = inferRecordRole({ ...info, fullText, filename: pdf.filename });
+
+      // 正文未抽到金额时，从文件名兜底（打车发票金额常写在文件名，如 携华-12.49元）
+      fallbackAmountFromFilename(info, pdf.filename);
 
       results.push(info);
 
@@ -454,4 +488,4 @@ async function extractPdfs() {
 if (require.main === module) {
   extractPdfs().catch(e => { console.error(e); process.exit(1); });
 }
-module.exports = { extractInvoiceInfo, deriveInvoiceType };
+module.exports = { extractInvoiceInfo, deriveInvoiceType, fallbackAmountFromFilename };

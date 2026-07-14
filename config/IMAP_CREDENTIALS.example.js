@@ -7,7 +7,7 @@ module.exports = {
       host: 'imap.qq.com',
       port: 993,
       tls: true,
-      rejectUnauthorized: false,
+      rejectUnauthorized: true,
       mailbox: 'INBOX',
       mailWebUser: 'your_qq_number',
     },

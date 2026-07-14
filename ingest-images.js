@@ -78,7 +78,8 @@ if (!Array.isArray(arr)) {
   process.exit(1);
 }
 
-const { emailsOut, classifiedOut, downloadOut, pdfTextOut, count } = buildImageIntake(arr, { dateTag });
+const threshold = Number(process.env.VISION_CONFIDENCE_THRESHOLD || 0.85);
+const { emailsOut, classifiedOut, downloadOut, pdfTextOut, visionReviewOut, count } = buildImageIntake(arr, { dateTag, threshold });
 
 const root = __dirname;
 const scanDir = path.join(root, 'scan-results');
@@ -92,6 +93,8 @@ fs.writeFileSync(path.join(scanDir, 'emails', `emails-${dateTag}.json`), JSON.st
 fs.writeFileSync(path.join(scanDir, 'classified', `classified-${dateTag}.json`), JSON.stringify(classifiedOut, null, 2), 'utf8');
 fs.writeFileSync(path.join(scanDir, 'downloads', `download-results-${dateTag}.json`), JSON.stringify(downloadOut, null, 2), 'utf8');
 fs.writeFileSync(path.join(scanDir, `pdf-text-${dateTag}.json`), JSON.stringify(pdfTextOut, null, 2), 'utf8');
+fs.writeFileSync(path.join(scanDir, `vision-review-${dateTag}.json`), JSON.stringify(visionReviewOut, null, 2), 'utf8');
 
 console.log(`✅ 图片 intake 合成记录已生成: ${count} 张发票, dateTag=${dateTag}`);
+console.log(`   视觉复核: ${visionReviewOut.meta.manualReview}/${visionReviewOut.meta.total} 条需要人工确认`);
 console.log('   下一步: 直接跑 step4..step11，或用 `npm run run -- --images "<路径>"` 一键串联');

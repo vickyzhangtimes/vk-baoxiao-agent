@@ -17,6 +17,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { isInvoiceRecord, formatRoute } = require('./lib/record-utils');
 
 const args = process.argv.slice(2);
 const dateTag = args[0] || '';
@@ -46,6 +47,7 @@ async function generateLedger() {
   const { applyOverrides } = require('./lib/apply-overrides');
   applyOverrides(data.data, (data.meta && data.meta.dateTag) || dateTag);
   const records = data.data;
+  const invoiceRecords = records.filter(isInvoiceRecord);
   const meta = data.meta;
 
   console.log('读取数据: ' + records.length + ' 条 (' + jsonFile + ')');
@@ -93,7 +95,7 @@ async function generateLedger() {
   hRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
   hRow.alignment = { horizontal: 'center' };
 
-  for (const r of records) {
+  for (const r of invoiceRecords) {
     const row = s1.addRow([
       r.index,
       r.buyer || '',
@@ -112,7 +114,7 @@ async function generateLedger() {
       r.subject || '',
       '',  // 超链接在下面设置
       r.notes || (r.manualReason ? '⚠️ ' + r.manualReason : ''),
-      r.transportType || '',
+      [r.transportType, r.flightNo].filter(Boolean).join(' / '),
       r.tripDate || '',
       r.fromStation || '',
       r.toStation || '',
@@ -155,7 +157,7 @@ async function generateLedger() {
   s2.getColumn(4).numFmt = '#,##0.00';
 
   const byBuyer = {};
-  for (const r of records) {
+  for (const r of invoiceRecords) {
     if (r.buyer) {
       byBuyer[r.buyer] = byBuyer[r.buyer] || { count: 0, withAmt: 0, total: 0, sellers: {} };
       byBuyer[r.buyer].count++;
@@ -189,7 +191,7 @@ async function generateLedger() {
   s3.getColumn(5).numFmt = '#,##0.00';
 
   const projAgg = {};
-  for (const r of records) {
+  for (const r of invoiceRecords) {
     const key = `${r.clientNo || '未分类'}|${r.projectNo || '未分类'}`;
     projAgg[key] = projAgg[key] || { clientType: r.clientType || '', clientNo: r.clientNo || '未分类', projectNo: r.projectNo || '未分类', count: 0, total: 0 };
     projAgg[key].count++;
@@ -209,7 +211,7 @@ async function generateLedger() {
   dp.alignment = { horizontal: 'center' };
 
   const detailAgg = {};
-  for (const r of records) {
+  for (const r of invoiceRecords) {
     const key = `${r.clientNo || '未分类'}|${r.projectNo || '未分类'}|${r.category || '其他'}|${r.month || '未知月份'}`;
     detailAgg[key] = detailAgg[key] || { clientNo: r.clientNo || '未分类', projectNo: r.projectNo || '未分类', category: r.category || '其他', month: r.month || '未知月份', count: 0, total: 0 };
     detailAgg[key].count++;
@@ -233,9 +235,9 @@ async function generateLedger() {
   s4.addRow(['完整三要素', meta.complete]);
   s4.addRow(['需人工确认', meta.needsManual]);
   // 归类统计
-  const autoN = records.filter(r => r.attributionStatus === 'auto').length;
-  const ovN = records.filter(r => r.attributionStatus === 'override').length;
-  const manN = records.filter(r => r.attributionStatus === 'manual').length;
+  const autoN = invoiceRecords.filter(r => r.attributionStatus === 'auto').length;
+  const ovN = invoiceRecords.filter(r => r.attributionStatus === 'override').length;
+  const manN = invoiceRecords.filter(r => r.attributionStatus === 'manual').length;
   s4.addRow(['归类-自动', autoN]);
   s4.addRow(['归类-手动覆盖', ovN]);
   s4.addRow(['归类-待归类', manN]);
@@ -243,7 +245,7 @@ async function generateLedger() {
   s4.addRow(['=== 金额汇总 ===', '']);
   s4.getColumn(2).numFmt = '#,##0.00';
 
-  const personal = records.filter(r => r.buyer === '个人报销');
+  const personal = invoiceRecords.filter(r => r.buyer === '个人报销');
   const personalTotal = personal.reduce((s, r) => s + (r.amount ? parseFloat(r.amount) : 0), 0);
   if (personal.length) s4.addRow(['个人报销', personalTotal]);
 
@@ -254,7 +256,7 @@ async function generateLedger() {
     s4.addRow([buyer, stats.total]);
   }
 
-  const allTotal = records.reduce((s, r) => s + (r.amount ? parseFloat(r.amount) : 0), 0);
+  const allTotal = invoiceRecords.reduce((s, r) => s + (r.amount ? parseFloat(r.amount) : 0), 0);
   s4.addRow(['合计（含未识别购买方）', allTotal]);
 
   s4.getColumn(1).width = 22; s4.getColumn(2).width = 16;
@@ -336,7 +338,7 @@ async function generateLedger() {
   console.log('✅ Excel台账已生成: ' + outputFile);
   console.log('');
   console.log('━━━ 台账内容 ━━━');
-  console.log('Sheet1 台账明细: ' + records.length + ' 条（含归类字段+邮件超链接）');
+  console.log('Sheet1 台账明细: ' + invoiceRecords.length + ' 条（含归类字段+邮件超链接）');
   console.log('Sheet2 购买方汇总');
   console.log('Sheet3 项目归类汇总');
   console.log('Sheet4 统计概览');

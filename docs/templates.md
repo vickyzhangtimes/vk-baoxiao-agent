@@ -3,6 +3,20 @@
 报销单支持「占位符 xlsx 模板」：你提供一张空白 Excel，在单元格里写 `{{token}}`，
 流水线按你的模板生成报销单。**映射是自描述的**——token 落在哪个单元格，就填哪个单元格。
 
+## 把现有公司报销模板交给 AI
+
+你不必从空白表格开始。可以把公司现有的空白 `.xlsx` 报销单、脱敏历史报销单、报销制度和项目归类资料交给宿主 AI Agent，请它按下列流程完成首次设置：
+
+1. 复制源文件，不覆盖原模板。
+2. 识别报销人/部门、发票明细、合计、签字和审批区域。
+3. 展示“源字段 → 本项目 token”映射和费用分类规则，等待你确认。
+4. 生成带白名单 token 的本地模板副本，做宏、外联公式和路径检查。
+5. 注册模板版本，设置 `REIMBURSEMENT_TEMPLATE`，并把经确认的稳定规则保存在本地 `config/`。
+
+之后每次只要给 AI 邮箱日期或一个报销材料文件夹地址，同一份模板和规则会自动复用。
+
+> “AI 学习”在这里指将字段映射、模板版本和用户确认的规则保存在本地，不是把真实报销材料上传训练公共模型。是否会调用云端模型，取决于你使用的宿主 Agent；本项目自身不上传邮箱授权码、真实模板或发票。
+
 ## 1. 怎么写模板
 
 最简单的方式是用起步生成器产出一个含全部 token 的空白模板，再改样式 / 增删列：
@@ -51,6 +65,11 @@ node generate-template.js --output 我的模板.xlsx
 | `{{不含税金额}}` | exTaxAmount |
 | `{{税额}}` | taxAmount |
 | `{{价税合计}}` | amount |
+| `{{交通方式}}` | transportType |
+| `{{航班号}}` | flightNo |
+| `{{出行日期}}` | tripDate |
+| `{{出发地}}` | fromStation |
+| `{{到达地}}` | toStation |
 | `{{备注}}` | notes |
 | `{{行小计}}` | 该行 amount |
 
@@ -120,7 +139,7 @@ node render-reimbursement.js --user 我 --name std --dateTag 20260101-20260711 -
 
 `--version <n>` 可指定历史版本重跑旧批次；`--input <invoice-final.json>` 可显式指定数据文件。
 
-## 8. 接入主流水线（run-all 自动跑批）
+## 7. 接入主流水线（run-all 自动跑批）
 
 设置环境变量 `REIMBURSEMENT_TEMPLATE` 后，`run-all.js` 会在 step6 之后自动多跑一步模板渲染，
 无需手动调 `render-reimbursement.js`。**未设置该变量 = 行为完全不变**（零侵入）。
@@ -131,7 +150,7 @@ export REIMBURSEMENT_TEMPLATE="我/std"          # 用最新版
 # 或指定历史版本重跑旧批次：
 export REIMBURSEMENT_TEMPLATE="我/std:2"
 
-npm run run                                     # 智能模式，模板步骤自动并入
+npm run agent -- --approve filesystem.read-input,filesystem.clean,filesystem.write-output # 智能模式
 ```
 
 接入细节（与 step6 互补，不替换）：
@@ -140,7 +159,7 @@ npm run run                                     # 智能模式，模板步骤自
 - 脏检查：模板产物依赖 `invoice-final` + 全部渲染代码 + 模板目录；改模板或改代码 → 自动重渲 + 重导出（沿用 run-all 链式传导）。
 - 配置开关在 `lib/pipeline-template-step.js`（`buildTemplateRenderStep`），便于单测。
 
-## 7. 提交前自查
+## 8. 提交前自查
 
 ```bash
 grep -rn "vbaProject\|WEBSERVICE" . --include=*.xlsx   # 期望：无

@@ -1,0 +1,7 @@
+interface:
+  display_name: "报销发票 Agent"
+  short_description: "本地处理邮箱、PDF 与图片发票并生成报销包"
+  default_prompt: "Use $reimbursement-invoice-agent to review the permission plan, process my invoice input locally, and return a reimbursement package with manual-review items."
+
+policy:
+  allow_implicit_invocation: true

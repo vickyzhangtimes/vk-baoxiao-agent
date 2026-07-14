@@ -1,6 +1,7 @@
 node_modules/
 scan-results/
 archive/
+input-invoices/
 .env
 config/IMAP_CREDENTIALS.js
 config/mailboxes.json
@@ -16,3 +17,4 @@ _e2e_tmp/
 
 # 用户模板（可能含真实公司名/成本中心/审批人，不进库）
 templates/
+agent-memory/

@@ -2,7 +2,7 @@
 
 本工具的所有「业务个性化」都通过 `config/` 下的几个 JSON/JS 文件完成，**改配置不碰代码**。下面逐项说明。
 
-> 所有改动在重新运行流水线（邮箱模式 `npm run run -- 起 止` 或文件夹模式 `node run-all.js --folder ...`）后生效。改完建议先 `npm run check` 确认 JSON 语法无误。
+> 所有改动在重新运行流水线后生效。改完先运行 `npm run config:check` 检查 JSON/JS 配置语法，再运行 `npm run check` 检查脚本语法。
 
 ---
 
@@ -129,7 +129,8 @@ module.exports = {
 
 - Windows 默认 `~/报销`
 - macOS / Linux 默认 `~/报销`
-- 覆盖示例：`REIMBURSE_ROOT=/data/报销 node run-all.js ...`
+- Windows PowerShell：`$env:REIMBURSE_ROOT = 'E:\报销'`
+- macOS / Linux：`REIMBURSE_ROOT=/data/报销 npm run agent -- ...`
 
 其它可选环境变量：`BATCH_DATE`（批次日期，默认今天）、`PERIOD_LABEL`（期间说明，默认「报销批次」）。
 
@@ -145,7 +146,7 @@ module.exports = {
 
 ## 常见坑
 
-1. **JSON 改坏**：改完 `npm run check` 验证语法；逗号、引号、括号最容易错。
+1. **JSON 改坏**：改完运行 `npm run config:check`；逗号、引号、括号最容易错。
 2. **关键词顺序**：具体类别往前放，避免被宽泛类别抢先命中。
 3. **覆盖不生效**：检查 `invoiceNo` 是否与数据里**完全一致**（别漏前导零）。
 4. **新类别不单独建文件夹**：在 `export-to-edrive.js` 的 `CATEGORY_ORDER` 里加上你的类别名即可。

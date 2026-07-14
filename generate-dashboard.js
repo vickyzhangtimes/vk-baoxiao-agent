@@ -3,6 +3,7 @@
 // 报销数据看板生成器：读 enriched invoice-final JSON，输出自包含 HTML（纯 SVG，无 CDN 依赖）
 const fs = require('fs');
 const path = require('path');
+const { isInvoiceRecord, formatRoute } = require('./lib/record-utils');
 
 const dateTag = process.argv[2];
 if (!dateTag) { console.error('用法: node generate-dashboard.js <dateTag>'); process.exit(1); }
@@ -18,6 +19,8 @@ if (!fs.existsSync(jsonPath)) { console.error('找不到:', jsonPath); process.e
 
 const raw = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
 const records = Array.isArray(raw.data) ? raw.data : [];
+const invoiceRecords = records.filter(isInvoiceRecord);
+const supportingCount = records.length - invoiceRecords.length;
 const meta = raw.meta || {};
 
 const PALETTE = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#9c755f','#bab0ac'];
@@ -27,7 +30,7 @@ const catMap = {}, projMap = {}, monthMap = {};
 const pending = [];
 let total = 0, validCount = 0;
 
-for (const r of records) {
+for (const r of invoiceRecords) {
   const amt = Number(r.amount) || 0;
   const hasArchive = !!(r.archivePath);
   const isPending = r.needsManualReview || !(amt > 0);
@@ -96,7 +99,7 @@ function legend(data) {
 const range = meta.dateRange ? `${meta.dateRange.start} ~ ${meta.dateRange.end}` : dateTag;
 const genAt = meta.generatedAt ? new Date(meta.generatedAt).toLocaleString('zh-CN') : '';
 
-const detailRows = records.map(r => {
+const detailRows = invoiceRecords.map(r => {
   const amt = Number(r.amount) || 0;
   const isPending = r.needsManualReview || !(amt > 0);
   const status = isPending
@@ -109,9 +112,9 @@ const detailRows = records.map(r => {
     <td>${esc((r.clientNo || '未分类') + ' / ' + (r.projectNo || '未分类'))}</td>
     <td class="num">${isPending ? '—' : fmt(amt)}</td>
     <td>${status}</td>
-    <td>${esc(r.transportType || '—')}</td>
+    <td>${esc([r.transportType, r.flightNo].filter(Boolean).join(' / ') || '—')}</td>
     <td>${esc(r.tripDate || '—')}</td>
-    <td>${esc((r.fromStation || '—') + (r.toStation ? ' → ' + r.toStation : ''))}</td>
+    <td>${esc(formatRoute(r, ' | ') || '—')}</td>
   </tr>`;
 }).join('');
 
@@ -190,7 +193,7 @@ const html = `<!DOCTYPE html>
     </div>
     <div class="panel full">
       <h2>发票明细</h2>
-      <table><thead><tr><th>发票号</th><th>销售方</th><th>费用类别</th><th>客户 / 项目</th><th class="num">金额</th><th>状态</th><th>交通方式</th><th>出行日期</th><th>行程(出发 → 到达)</th></tr></thead><tbody>${detailRows}</tbody></table>
+      <table><thead><tr><th>发票号</th><th>销售方</th><th>费用类别</th><th>客户 / 项目</th><th class="num">金额</th><th>状态</th><th>交通方式 / 航班号</th><th>出行日期</th><th>行程(出发 → 到达)</th></tr></thead><tbody>${detailRows}</tbody></table>
     </div>
   </div>
 </div>

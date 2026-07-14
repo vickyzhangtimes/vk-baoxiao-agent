@@ -16,6 +16,8 @@ const path = require('path');
 const config = require('./config/BUYER_MAP');
 const { getMailWebUser } = require('./lib/env');
 const { deriveExTaxAmount } = require('./lib/invoice-fields');
+const { inferRecordRole, isInvoiceRecord } = require('./lib/record-utils');
+const { linkSupportingDocuments } = require('./lib/travel-link');
 
 const args = process.argv.slice(2);
 const dateTag = args[0] || '';
@@ -185,6 +187,11 @@ async function mergeData() {
       expectedAction: classifiedByUid[String(email.uid)]?.expectedAction || null,
       platform: classifiedByUid[String(email.uid)]?.platform || null,
       resolver: downloadByUid[String(email.uid)]?.find(x => x.resolver)?.resolver || null,
+      sourceRelativePath: email.sourceRelativePath || downloadByUid[String(email.uid)]?.[0]?.sourceRelativePath || null,
+      sourceSha256: email.sourceSha256 || downloadByUid[String(email.uid)]?.[0]?.sourceSha256 || null,
+      recordRole: null,
+      amountCandidate: null,
+      amountCandidateSource: null,
       docType: null,
       buyer: null,
       buyerSource: null,
@@ -207,9 +214,11 @@ async function mergeData() {
       // 行程/差旅结构化字段（由 step3 extractTravel 产出）
       tripDate: null,
       transportType: null,
+      flightNo: null,
       fromStation: null,
       toStation: null,
       tripUncertain: null,
+      legs: null, // 多段行程：[{from,to}, ...]（高德/滴滴行程单可能含多段）
     };
 
     // ===== A. 从邮件正文提取的信息 =====
@@ -259,7 +268,7 @@ async function mergeData() {
         // 从文件名提取金额
         if (!record.amount) {
           const fnAmt = extractAmountFromFilename(pdfAtt.filename);
-          if (fnAmt) { record.amount = fnAmt; record.amountSource = 'filename'; }
+          if (fnAmt) { record.amountCandidate = fnAmt; record.amountCandidateSource = 'filename'; }
         }
       }
     }
@@ -289,6 +298,10 @@ async function mergeData() {
       record.taxAmount = (pdfRecord.taxAmount == null || pdfRecord.taxAmount === '') ? null : Number(pdfRecord.taxAmount);
       record.invoiceType = pdfRecord.invoiceType || null;
       record.pdfText = (pdfRecord.fullText || '').substring(0, 500); // 只保存前500字符
+      record.visionReview = pdfRecord.visionReview || null;
+      record.recordRole = pdfRecord.recordRole || inferRecordRole({ ...pdfRecord, subject: email.subject, pdfFilename: record.pdfFilename });
+      record.amountCandidate = pdfRecord.amountCandidate || record.amountCandidate;
+      record.amountCandidateSource = pdfRecord.amountCandidateSource || record.amountCandidateSource;
 
       // 金额：PDF价税合计优先
       if (pdfRecord.amount) {
@@ -317,8 +330,10 @@ async function mergeData() {
         // 行程单有起终点时覆盖发票的空值
         if (pr.travel.fromStation) mergedTravel.fromStation = pr.travel.fromStation;
         if (pr.travel.toStation) mergedTravel.toStation = pr.travel.toStation;
+        if (pr.travel.legs && pr.travel.legs.length) mergedTravel.legs = pr.travel.legs;
         if (pr.travel.tripDate && !mergedTravel.tripDate) mergedTravel.tripDate = pr.travel.tripDate;
         if (pr.travel.transportType && !mergedTravel.transportType) mergedTravel.transportType = pr.travel.transportType;
+        if (pr.travel.flightNo && !mergedTravel.flightNo) mergedTravel.flightNo = pr.travel.flightNo;
         // 如果发票标了 tripUncertain 但行程单没有，以行程单为准
         if (pr.travel.tripUncertain === false) mergedTravel.tripUncertain = false;
       }
@@ -326,12 +341,22 @@ async function mergeData() {
       if (travel) {
         record.transportType = travel.transportType || record.transportType;
         record.tripDate = travel.tripDate || record.tripDate;
+        record.flightNo = travel.flightNo || record.flightNo;
         record.fromStation = travel.fromStation || null;
         record.toStation = travel.toStation || null;
+        record.legs = (travel.legs && travel.legs.length) ? travel.legs : null;
         // 注意：tripUncertain 是布尔，false 表示「已确认无误」，不能用 || null 否则 false 会被吞掉
         record.tripUncertain = (travel.tripUncertain === true || travel.tripUncertain === false)
           ? travel.tripUncertain : null;
       }
+    }
+
+    record.recordRole = record.recordRole || inferRecordRole({ ...record, subject: email.subject });
+    if (record.recordRole === 'supporting_document' && record.amount) {
+      record.amountCandidate = record.amountCandidate || record.amount;
+      record.amountCandidateSource = record.amountCandidateSource || record.amountSource || 'document';
+      record.amount = null;
+      record.amountSource = null;
     }
 
     // ===== E. 推断购买方 =====
@@ -352,7 +377,8 @@ async function mergeData() {
     }
 
     // ===== F. 判断是否需要人工 =====
-    const needsManual = !record.amount || (!record.buyer && !record.seller);
+    const needsManual = isInvoiceRecord(record) && (!record.amount || (!record.buyer && !record.seller));
+    const needsVisionReview = Boolean(record.visionReview && record.visionReview.needsManualReview);
     if ((email.status === 'needs-manual' || email.status === 'pending-link') && !record.hasPdf) {
       record.needsManualReview = true;
       record.manualReason = email.status === 'needs-manual'
@@ -372,6 +398,28 @@ async function mergeData() {
         currentSeller: record.seller,
         links: email.links,
       });
+    } else if (needsVisionReview) {
+      record.needsManualReview = true;
+      record.manualReason = 'VISION_LOW_CONFIDENCE';
+      manualTasks.push({
+        uid: email.uid,
+        hyperlink: record.emailHyperlink,
+        subject: email.subject,
+        date: email.date,
+        reason: record.manualReason,
+        currentAmount: record.amount,
+        currentBuyer: record.buyer,
+        currentSeller: record.seller,
+        issues: record.visionReview.issues,
+      });
+    } else if (isInvoiceRecord(record) && !record.amount && record.amountCandidate) {
+      // 用户已授权（Task A：文件名金额自动兜底）：真实发票 PDF 未抽到金额、但文件名含「Y.YY元」时，
+      // 文件名金额直接转正为正式金额（数据优先级：PDF 正文 > 文件名，此分支仅作兜底）。
+      // 仅作用于真实发票（isInvoiceRecord 已排除行程单等 supporting_document），不会重复计入。
+      record.amount = record.amountCandidate;
+      record.amountSource = record.amountCandidateSource || 'filename';
+      record.amountAutoFilled = true;
+      record.manualReason = null;
     } else if (needsManual) {
       record.needsManualReview = true;
       record.manualReason = !record.amount ? 'NO_AMOUNT' : 'NO_BUYER';
@@ -389,6 +437,13 @@ async function mergeData() {
 
     finalRecords.push(record);
   }
+
+  // ===== H. 唯一关联配套行程单 → 发票 =====
+  const travelLinks = linkSupportingDocuments(finalRecords);
+  const linked = travelLinks.filter(x => x.status === 'linked').length;
+  const ambiguous = travelLinks.filter(x => x.status === 'ambiguous').length;
+  if (linked) console.log(`🔗 已唯一关联  张行程单 → 对应发票`);
+  if (ambiguous) console.warn(`⚠️  张行程单存在同金额多候选，已转人工复核`);
 
   // ===== G. 批量修正已知问题 =====
   for (const r of finalRecords) {
@@ -418,17 +473,25 @@ async function mergeData() {
     }
   }
 
+  // 关联完成后重建人工任务，避免已关联配套凭证仍留在待补金额清单。
+  manualTasks.length = 0;
+  for (const r of finalRecords.filter(x => x.needsManualReview)) {
+    manualTasks.push({ uid: r.emailUid, hyperlink: r.emailHyperlink, subject: r.subject, date: r.emailDate,
+      reason: r.manualReason, currentAmount: r.amount, amountCandidate: r.amountCandidate, currentBuyer: r.buyer, currentSeller: r.seller });
+  }
+
   // ===== 统计 =====
+  const invoiceRecords = finalRecords.filter(isInvoiceRecord);
   const byStatus = {};
-  finalRecords.forEach(r => { byStatus[r.status] = (byStatus[r.status] || 0) + 1; });
-  const withBuyer = finalRecords.filter(r => r.buyer).length;
-  const withSeller = finalRecords.filter(r => r.seller).length;
-  const withAmount = finalRecords.filter(r => r.amount).length;
-  const complete = finalRecords.filter(r => r.buyer && r.seller && r.amount).length;
-  const needsManualCount = finalRecords.filter(r => r.needsManualReview).length;
+  invoiceRecords.forEach(r => { byStatus[r.status] = (byStatus[r.status] || 0) + 1; });
+  const withBuyer = invoiceRecords.filter(r => r.buyer).length;
+  const withSeller = invoiceRecords.filter(r => r.seller).length;
+  const withAmount = invoiceRecords.filter(r => r.amount).length;
+  const complete = invoiceRecords.filter(r => r.buyer && r.seller && r.amount).length;
+  const needsManualCount = invoiceRecords.filter(r => r.needsManualReview).length;
 
   const byBuyer = {};
-  finalRecords.filter(r => r.buyer && r.amount).forEach(r => {
+  invoiceRecords.filter(r => r.buyer && r.amount).forEach(r => {
     byBuyer[r.buyer] = byBuyer[r.buyer] || { count: 0, total: 0 };
     byBuyer[r.buyer].count++;
     byBuyer[r.buyer].total += parseFloat(r.amount);
@@ -532,10 +595,10 @@ async function mergeData() {
   console.log('');
   console.log('━━━ 合并完成 ━━━');
   console.log('总记录: ' + finalRecords.length);
-  console.log('购买方: ' + withBuyer + '/' + finalRecords.length);
-  console.log('销售方: ' + withSeller + '/' + finalRecords.length);
-  console.log('金额: ' + withAmount + '/' + finalRecords.length);
-  console.log('完整: ' + complete + '/' + finalRecords.length);
+  console.log('购买方: ' + withBuyer + '/' + invoiceRecords.length);
+  console.log('销售方: ' + withSeller + '/' + invoiceRecords.length);
+  console.log('金额: ' + withAmount + '/' + invoiceRecords.length);
+  console.log('完整: ' + complete + '/' + invoiceRecords.length);
   console.log('需人工: ' + needsManualCount);
   console.log('');
   console.log('━━━ 购买方汇总 ━━━');

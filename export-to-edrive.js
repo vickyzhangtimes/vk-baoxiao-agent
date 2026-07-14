@@ -27,14 +27,16 @@
 
 const fs = require('fs');
 const path = require('path');
+const { isInvoiceRecord, formatRoute } = require('./lib/record-utils');
 const os = require('os');
 const { safeCleanDir } = require('./lib/safe-clean');
 const { loadPackageConfig } = require('./lib/load-package-config');
+const { assertSafeChild, safeSegment } = require('./lib/path-guard');
 
 const SKILL = __dirname;
 const REIMBURSE_ROOT = process.env.REIMBURSE_ROOT || path.join(os.homedir(), '报销');
-const BATCH_DATE = process.env.BATCH_DATE || new Date().toISOString().slice(0, 10);
-const PERIOD_LABEL = process.env.PERIOD_LABEL || '报销批次';
+const BATCH_DATE = safeSegment(process.env.BATCH_DATE || new Date().toISOString().slice(0, 10), 'BATCH_DATE');
+const PERIOD_LABEL = safeSegment(process.env.PERIOD_LABEL || '报销批次', 'PERIOD_LABEL');
 
 // 占位字段：配置 > 环境变量 > package-config.js > 占位默认值（见 lib/load-package-config.js）
 const F = loadPackageConfig();
@@ -71,11 +73,13 @@ const finalPath = fs.existsSync(tablePath)
 const SOURCE_NAME = path.basename(finalPath);
 const finalData = JSON.parse(fs.readFileSync(finalPath, 'utf8'));
 const records = Array.isArray(finalData.data) ? finalData.data : [];
+const invoiceRecords = records.filter(isInvoiceRecord);
+const supportingRecords = records.filter(r => !isInvoiceRecord(r));
 
 // ---------- 1. 建目录树 ----------
-const outRoot = path.join(REIMBURSE_ROOT, `${BATCH_DATE}_${PERIOD_LABEL}`);
+const outRoot = assertSafeChild(REIMBURSE_ROOT, path.join(REIMBURSE_ROOT, `${BATCH_DATE}_${PERIOD_LABEL}`), '报销包目录');
 // 幂等：先清空旧报销包（安全走回收站），再重建，保证每次都是一份干净交付物
-safeCleanDir(outRoot);
+safeCleanDir(outRoot, { allowedRoot: REIMBURSE_ROOT });
 const dirs = {
   root: outRoot,
   originals: path.join(outRoot, '01_发票原件'),
@@ -90,7 +94,7 @@ for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
 // 仅含本批次已成功归档（archivePath 存在）的发票；未下载/链接型进「待补齐项」。
 const CATEGORY_ORDER = ['餐饮招待', '差旅交通', '住宿', '通讯费', '员工福利', '其他', '未分类', '待分类'];
 const catBuckets = {};
-for (const r of records) {
+for (const r of invoiceRecords) {
   if (!r.archivePath || !fs.existsSync(r.archivePath)) continue;
   const cat = r.category || '待分类';
   catBuckets[cat] = catBuckets[cat] || [];
@@ -106,7 +110,7 @@ for (const cat of sortedCats) {
   const sub = path.join(dirs.originals, cat);
   fs.mkdirSync(sub, { recursive: true });
   for (const u of catBuckets[cat]) {
-    const noTail = u.rec.invoiceNo ? String(u.rec.invoiceNo).slice(-4) : '????';
+    const noTail = u.rec.invoiceNo ? String(u.rec.invoiceNo).slice(-4) : (u.rec.emailUid != null ? 'u' + u.rec.emailUid : '0000');
     const amt = u.rec.amount ? Number(u.rec.amount).toFixed(2) : '0.00';
     const seller = String(u.rec.seller || '').replace(/（.*?）有限公司?/g, '').slice(0, 12) || '未知';
     const newName = `${String(pdfIdx + 1).padStart(2, '0')}_${amt}_${seller}_${noTail}.pdf`;
@@ -121,7 +125,7 @@ for (const cat of sortedCats) {
 const fmt = (n) => (Number(n) || 0).toFixed(2);
 let validCount = 0, validTotal = 0, pendingCount = 0;
 const byCategory = {};
-for (const r of records) {
+for (const r of invoiceRecords) {
   if (r.needsManualReview) { pendingCount++; continue; }
   const amt = Number(r.amount) || 0;
   if (amt === 0) { pendingCount++; continue; }
@@ -144,11 +148,11 @@ const claimMd = [
   '',
   '| # | 销售方 | 金额(¥) | 类别 | 发票号 | 发票日期 | 交通方式 | 出行日期 | 行程(出发 → 到达) | 状态 |',
   '|---|---|---|---|---|---|---|---|---|---|',
-  ...records.map((r, i) => {
+  ...invoiceRecords.map((r, i) => {
     const amt = Number(r.amount) || 0;
     const st = r.needsManualReview || amt === 0 ? '⚠️待处理' : '✅已识别';
-    const trip = r.fromStation || r.toStation ? `${r.fromStation || ''}${r.toStation ? ' → ' + r.toStation : ''}` : '-';
-    return `| ${i + 1} | ${r.seller || '-'} | ${fmt(amt)} | ${r.category || '未分类'} | ${r.invoiceNo || '-'} | ${r.invoiceDate || '-'} | ${r.transportType || '-'} | ${r.tripDate || '-'} | ${trip} | ${st} |`;
+    const trip = formatRoute(r, ' | ') || '-';
+    return `| ${i + 1} | ${r.seller || '-'} | ${fmt(amt)} | ${r.category || '未分类'} | ${r.invoiceNo || '-'} | ${r.invoiceDate || '-'} | ${[r.transportType, r.flightNo].filter(Boolean).join(' / ') || '-'} | ${r.tripDate || '-'} | ${trip} | ${st} |`;
   }),
   '',
   '## 签字',
@@ -166,7 +170,7 @@ const todoMd = [
   '',
   '| # | 销售方 | 已知信息 | 来源邮件 | 跟进动作 |',
   '|---|---|---|---|---|',
-  ...records.filter((r) => r.needsManualReview || (Number(r.amount) || 0) === 0)
+  ...invoiceRecords.filter((r) => r.needsManualReview || (Number(r.amount) || 0) === 0)
     .map((r, i) => `| ${i + 1} | ${r.seller || '-'} | 金额${r.amount || '未知'} / ${r.invoiceDate || ''} | [邮件](${r.emailHyperlink || '#'}) | ${r.manualReason || '补金额/抬头'} |`),
   '',
 ].join('\n');
@@ -175,10 +179,10 @@ fs.writeFileSync(path.join(dirs.claimer, '待补齐项.md'), todoMd);
 const summaryMd = [
   `# 报销清单 · 一页纸 · ${BATCH_DATE}（${PERIOD_LABEL}）`,
   '',
-  `- 共 ${records.length} 张发票：已识别 ${validCount} 张（¥${fmt(validTotal)}）、待处理 ${pendingCount} 张`,
+  `- 共 ${invoiceRecords.length} 张发票：已识别 ${validCount} 张（¥${fmt(validTotal)}）、待处理 ${pendingCount} 张`,
   `- 已落地 PDF 原件 ${downloadedCount} 张（含待确认 ${catBuckets['待确认'] ? catBuckets['待确认'].length : 0} 张）`,
   `- 类别分布：${Object.entries(byCategory).map(([k, v]) => `${k} ¥${fmt(v)}`).join(' / ') || '（暂无）'}`,
-  `- 进度：${validCount}/${records.length} 已可报，剩 ${pendingCount} 张待补齐`,
+  `- 进度：${validCount}/${invoiceRecords.length} 已可报，剩 ${pendingCount} 张待补齐`,
   '',
   '> 详细报销单见 02_报销人视角/报销单.md；做账汇总见 03_出纳视角/费用类别汇总.xlsx',
   '',
@@ -213,7 +217,7 @@ th{background:#f0f4f8}
 报销总额：<b>¥${fmt(validTotal)}</b> ｜ 已识别 ${validCount} 张，待处理 ${pendingCount} 张 ｜ 已下载原件 ${downloadedCount} 张
 </div>
 <table><thead><tr><th>#</th><th>销售方</th><th>金额(¥)</th><th>类别</th><th>发票号</th><th>日期</th><th>交通方式</th><th>出行日期</th><th>行程(出发 → 到达)</th><th>状态</th></tr></thead><tbody>
-${records.map((r, i) => { const amt = Number(r.amount) || 0; const st = (r.needsManualReview || amt === 0); const trip = r.fromStation || r.toStation ? `${r.fromStation || ''}${r.toStation ? ' → ' + r.toStation : ''}` : '-'; return `<tr><td>${i + 1}</td><td>${r.seller || '-'}</td><td>${fmt(amt)}</td><td>${r.category || '未分类'}</td><td>${r.invoiceNo || '-'}</td><td>${r.invoiceDate || '-'}</td><td>${r.transportType || '-'}</td><td>${r.tripDate || '-'}</td><td>${trip}</td><td class="${st ? 'warn' : 'ok'}">${st ? '待处理' : '已识别'}</td></tr>`; }).join('')}
+${invoiceRecords.map((r, i) => { const amt = Number(r.amount) || 0; const st = (r.needsManualReview || amt === 0); const trip = formatRoute(r, ' | ') || '-'; return `<tr><td>${i + 1}</td><td>${r.seller || '-'}</td><td>${fmt(amt)}</td><td>${r.category || '未分类'}</td><td>${r.invoiceNo || '-'}</td><td>${r.invoiceDate || '-'}</td><td>${[r.transportType, r.flightNo].filter(Boolean).join(' / ') || '-'}</td><td>${r.tripDate || '-'}</td><td>${trip}</td><td class="${st ? 'warn' : 'ok'}">${st ? '待处理' : '已识别'}</td></tr>`; }).join('')}
 </tbody></table>
 <div class="sign">报销人签字：__________ 日期：__________<br>审批人签字：${F.approver} 日期：__________</div>
 </body></html>`;
@@ -261,7 +265,7 @@ th,td{border:1px solid #999;padding:6px 8px}
 <tr><th>付款方式</th><td class="ph">{{银行转账/现金}}</td><th>银行回单</th><td class="ph">{{粘贴回单}}</td></tr></table>
 <h2>费用类别汇总（做账用）</h2>
 <table><thead><tr><th>费用类别</th><th>金额(¥)</th><th>笔数</th></tr></thead><tbody>
-${catRows.map(([c, v]) => `<tr><td>${c}</td><td>${fmt(v)}</td><td>${records.filter((r) => (r.category || '未分类') === c && !r.needsManualReview && (Number(r.amount) || 0) > 0).length}</td></tr>`).join('')}
+${catRows.map(([c, v]) => `<tr><td>${c}</td><td>${fmt(v)}</td><td>${invoiceRecords.filter((r) => (r.category || '未分类') === c && !r.needsManualReview && (Number(r.amount) || 0) > 0).length}</td></tr>`).join('')}
 <tr><th>合计</th><th>¥${fmt(validTotal)}</th><th>${validCount}</th></tr>
 </tbody></table>
 <p style="color:#777;font-size:12px">注：待处理 ${pendingCount} 张未计入合计，补齐后另行入账。</p>
@@ -288,7 +292,7 @@ const certTxt = [
 fs.writeFileSync(path.join(dirs.cashier, '记账凭证摘要.txt'), certTxt);
 
 // 发票合规检查清单（每张发票的合规状态一目了然）
-const complianceRows = records.map((r, i) => {
+const complianceRows = invoiceRecords.map((r, i) => {
   const amt = Number(r.amount) || 0;
   const hasSeller = !!r.seller;
   const hasNo = !!r.invoiceNo;
@@ -321,7 +325,7 @@ tr:hover{background:#f8f9fa}</style></head><body>
 <div class="scard"><div class="n ok">${complianceRows.filter(r=>r.okCount===4).length}</div><div class="l">完全合规</div></div>
 <div class="scard"><div class="n warn">${complianceRows.filter(r=>r.okCount>=2&&r.okCount<4).length}</div><div class="l">部分缺失</div></div>
 <div class="scard"><div class="n bad">${complianceRows.filter(r=>r.isPending).length}</div><div class="l">待处理</div></div>
-<div class="scard"><div class="n">${records.length}</div><div class="l">总记录数</div></div>
+<div class="scard"><div class="n">${invoiceRecords.length}</div><div class="l">发票总数</div></div>
 </div>
 <table><thead><tr><th>#</th><th>销售方</th><th>金额(¥)</th><th>抬头✓</th><th>发票号✓</th><th>日期✓</th><th>金额✓</th><th>类别</th><th>问题/提示</th></tr></thead><tbody>
 ${complianceRows.map(c => `<tr>
@@ -356,8 +360,8 @@ const attachmentMd = [
   '',
   '## 勾稽检查',
   '',
-  `- 明细总数 (${records.length}) = 已识别(${validRecCount}) + 待处理(${pendingCount}): ${(records.length === validRecCount + pendingCount)?'✅ 一致':'⚠️ 不一致'}`,
-  `- PDF原件数(${pdfFileCount}) >= 明细总数(${records.length}): ${pdfFileCount >= records.length?'✅ 充足':'⚠️ PDF不足'}`,
+  `- 发票明细数 (${invoiceRecords.length}) = 已识别(${validRecCount}) + 待处理(${pendingCount}): ${(invoiceRecords.length === validRecCount + pendingCount)?'✅ 一致':'⚠️ 不一致'}`,
+  `- PDF原件数(${pdfFileCount}) >= 发票数(${invoiceRecords.length}): ${pdfFileCount >= invoiceRecords.length?'✅ 充足':'⚠️ PDF不足'}`,
   '',
   '## 出纳操作清单',
   '',
@@ -409,7 +413,7 @@ table{border-collapse:collapse;width:100%;font-size:13px;margin-top:12px}
 th,td{border:1px solid #ccc;padding:6px 8px}</style></head><body>
 <h1>报销总览 · ${BATCH_DATE}（${PERIOD_LABEL}）</h1>
 <div class="cards">
-<div class="card"><div class="n">${records.length}</div><div class="l">发票总数</div></div>
+<div class="card"><div class="n">${invoiceRecords.length}</div><div class="l">发票总数</div></div>
 <div class="card"><div class="n">${validCount}</div><div class="l">已识别</div></div>
 <div class="card"><div class="n">${pendingCount}</div><div class="l">待处理</div></div>
 <div class="card"><div class="n">${downloadedCount}</div><div class="l">已下载PDF</div></div>
@@ -419,7 +423,7 @@ th,td{border:1px solid #ccc;padding:6px 8px}</style></head><body>
 ${catRows.length ? catRows.map(([c, v]) => `<div class="bar" style="width:${Math.max(12, (v / validTotal) * 100)}%">${c} ¥${fmt(v)}</div>`).join('') : '<p>暂无已识别金额</p>'}
 <h2 style="font-size:15px;color:#2b6cb0">发票明细</h2>
 <table><thead><tr><th>#</th><th>销售方</th><th>金额</th><th>类别</th><th>状态</th></tr></thead><tbody>
-${records.map((r, i) => { const amt = Number(r.amount) || 0; const st = r.needsManualReview || amt === 0; return `<tr><td>${i + 1}</td><td>${r.seller || '-'}</td><td>${fmt(amt)}</td><td>${r.category || '未分类'}</td><td>${st ? '待处理' : '已识别'}</td></tr>`; }).join('')}
+${invoiceRecords.map((r, i) => { const amt = Number(r.amount) || 0; const st = r.needsManualReview || amt === 0; return `<tr><td>${i + 1}</td><td>${r.seller || '-'}</td><td>${fmt(amt)}</td><td>${r.category || '未分类'}</td><td>${st ? '待处理' : '已识别'}</td></tr>`; }).join('')}
 </tbody></table>
 <p style="color:#777;font-size:12px">数据来源：${SOURCE_NAME}（真实流水线条目，规范中间表优先）。待处理项见 02_报销人视角/待补齐项.md</p>
 </body></html>`;
@@ -453,7 +457,7 @@ const noteTxt = [
   `  04_总览看板.html   整体可视化`,
   `  05_原始数据/       流水线原始 JSON 备份`,
   ``,
-  `统计：发票 ${records.length} 张（已识别 ${validCount} 张 ¥${fmt(validTotal)}，待处理 ${pendingCount} 张）；已下载 PDF 原件 ${downloadedCount} 张（文件名金额合计 ¥${fmt(originalsTotal)}）。`,
+  `统计：发票 ${invoiceRecords.length} 张，配套凭证 ${supportingRecords.length} 份（已识别 ${validCount} 张 ¥${fmt(validTotal)}，待处理 ${pendingCount} 张）；已下载 PDF 原件 ${downloadedCount} 张（文件名金额合计 ¥${fmt(originalsTotal)}）。`,
   ``,
   `重要提示：`,
   `  - 待处理 ${pendingCount} 张金额/抬头未识别，不计入可报总额，需补齐后入账。`,
@@ -471,6 +475,6 @@ if (fs.existsSync(dlPath)) fs.copyFileSync(dlPath, path.join(dirs.raw, `download
 (async () => {
   await writeCategoryXlsx();
   console.log(`✅ 报销包已导出到：${outRoot}`);
-  console.log(`   发票总数 ${records.length} | 已识别 ${validCount} (¥${fmt(validTotal)}) | 待处理 ${pendingCount} | 已下载PDF ${downloadedCount}`);
+  console.log(`   发票总数 ${invoiceRecords.length} | 已识别 ${validCount} (¥${fmt(validTotal)}) | 待处理 ${pendingCount} | 已下载PDF ${downloadedCount}`);
   console.log(`   类别分桶：${Object.keys(catBuckets).join(', ')}`);
 })();

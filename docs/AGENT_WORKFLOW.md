@@ -2,7 +2,7 @@
 
 这个项目不是让用户手动点脚本，而是给 Agent 一组可靠工具。Agent 负责理解用户目标、配置本地环境、运行流水线、检查结果、解释异常。
 
-支持两种输入模式：**邮箱模式**（自动扫描下载）和**文件夹模式**（用户已下载好 PDF，直接识别）。
+支持三种输入模式：**邮箱模式**（自动扫描下载）、**文件夹模式**（本地 PDF）和**图片模式**（宿主视觉 Agent 先生成结构化 JSON）。
 
 ## 1. 开始前
 
@@ -22,37 +22,45 @@
 - `MAIL_WEB_USER`，QQ 邮箱通常填 QQ 号
 
 文件夹模式只需：文件夹绝对路径（可选 `--date-tag` 批次标签）。
+图片模式需读取 `references/image-intake-schema.md`，确认视觉模型与数据去向，再生成 `extracted-invoices.json`。
 
 ## 2. 初始化
 
-邮箱模式：如果用户在对话中给了账号信息，直接写入本地 `.env`（复制 `.env.example`）。不要回显授权码。或运行：
+不要要求用户在对话中提供邮箱授权码。让用户在本机运行：
 
 ```bash
 npm install
 npm run setup
 ```
 
-两种模式都要检查环境：
+按实际模式检查环境：
 
 ```bash
 npm run doctor
 npm run check
 ```
 
-文件夹模式无需邮箱，无需联网。
+文件夹模式无需邮箱、无需联网；图片模式的联网边界由宿主视觉 Agent 决定。
 
 ## 3. 运行
 
 ### 邮箱模式
 
 ```bash
-npm run run -- 2026-06-15 2026-06-22
+npm run agent -- 2026-06-15 2026-06-22 --approve mail.read,network.download,filesystem.clean,filesystem.write-output
 ```
 
 ### 文件夹模式
 
 ```bash
-node run-all.js --folder "/绝对路径/发票文件夹" --date-tag mybatch01
+npm run agent -- --folder "/绝对路径/发票文件夹" --date-tag mybatch01 --approve filesystem.read-input,filesystem.clean,filesystem.write-output
+```
+
+### 图片模式
+
+```bash
+npm run agent -- --images "/绝对路径/extracted-invoices.json" --plan
+npm run agent -- --images "/绝对路径/extracted-invoices.json" --approve filesystem.read-input,vision.process-images,filesystem.clean,filesystem.write-output
 ```
 
 流水线（11 步）：
@@ -108,7 +116,7 @@ node run-all.js --folder "/绝对路径/发票文件夹" --date-tag mybatch01
 
 - 链接过期 / 需扫码 / 平台防盗链（邮箱模式）。
 - PDF 无法解析。
-- 缺少购买方、销售方或金额（如打车行程单无金额，仅作行程说明）。
+- 发票缺少购买方、销售方或正文金额；文件名金额只作候选。行程单属于配套凭证，不因无金额进入发票待补分母。
 - 无发票号的发票靠文件名+金额去重。
 
 向用户汇报时，说明 UID / 邮件标题（或文件名）、已知字段、失败原因和建议动作。补齐用 `fill-pending.js`。
@@ -117,12 +125,12 @@ node run-all.js --folder "/绝对路径/发票文件夹" --date-tag mybatch01
 
 不要只为某一封邮件写特例。重复出现的失败模式应抽象成新的链接解析类型或字段识别规则。
 
-差旅字段（打车/火车）来自 `lib/extract-travel.js`：发票 PDF 提供金额/销售方，`行程单` PDF 提供起点终点，由 step4 按同邮件/同文件夹合并覆盖。新增打车平台（曹操、首汽等）只需在 `extractItinerary()` 加规则。
+差旅字段（打车/火车）来自 `lib/extract-travel.js`：发票 PDF 提供金额/销售方，`行程单` PDF 提供起点终点，由 step4 按唯一候选关联；同金额多候选进入 `TRAVEL_LINK_AMBIGUOUS` 人工复核。新增打车平台（曹操、首汽等）只需在 `extractItinerary()` 加规则。
 
 最终数据可信顺序：
 
 ```text
-PDF 发票正文 > PDF 文件名 > 邮件正文 > 邮件标题 > 发件人/映射推断
+已确认的人工覆盖 > PDF 发票正文 > 邮件正文 > 邮件标题 > 发件人/映射推断
 ```
 
 提交代码前确认这些内容没有进入 Git：

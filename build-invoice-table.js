@@ -21,6 +21,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { scanArchive, resolveArchive } = require('./lib/archive-resolver');
 
 const ROOT = __dirname;
 const SCAN_DIR = path.join(ROOT, 'scan-results');
@@ -83,50 +84,16 @@ function main() {
     if (um) pdfByUid[um[1]] = r;
   }
 
-  // 扫描 archive/ 实际文件构建索引（权威来源，修复 invoice-final 的 pdfFilepath:null）
+  // 扫描 archive/ 实际文件构建索引；明确排除扁平目录，避免重复候选。
   const ALL_PDF_DIR = path.join(ARCHIVE_DIR, '本轮全部PDF');
-  function scanArchive(base, excludeDirName) {
-    const idx = [];
-    if (!fs.existsSync(base)) return idx;
-    (function walk(d) {
-      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-        const p = path.join(d, e.name);
-        if (e.isDirectory()) { if (!excludeDirName || path.basename(d) !== excludeDirName) walk(p); }
-        else if (/\.pdf$/i.test(e.name)) {
-          const seller = path.basename(path.dirname(p));
-          const amtM = e.name.match(/^(\d+(?:\.\d{2})?)_/);
-          const amt = amtM ? Number(amtM[1]) : null;
-          const suf = (e.name.match(/_(\d{6})_/) || [])[1] || null;
-          idx.push({ file: p, amount: amt, seller, suffix: suf });
-        }
-      }
-    })(base);
-    return idx;
-  }
   const archiveIdx = scanArchive(ARCHIVE_DIR, '本轮全部PDF');
   const flatIdx = scanArchive(ALL_PDF_DIR);
-
-  function resolveBy(record, idx) {
-    const invNo = record.invoiceNo;
-    if (invNo && invNo.length >= 6) {
-      const suf = invNo.slice(-6);
-      const hit = idx.find(x => x.suffix === suf);
-      if (hit) return hit.file;
-    }
-    const amt = num(record.amount);
-    const seller = record.seller;
-    let cand = idx.filter(x => (!amt || x.amount === amt) && (!seller || x.seller === seller));
-    if (cand.length > 1 && amt) cand = cand.filter(x => x.amount === amt);
-    if (cand.length >= 1) return cand[0].file;
-    if (amt) { const byAmt = idx.find(x => x.amount === amt); if (byAmt) return byAmt.file; }
-    return null;
-  }
 
   const records = (finalData.data || []).map(r => {
     const pdf = (r.pdfFilename && pdfByFile[r.pdfFilename]) ||
       (r.emailUid && pdfByUid[String(r.emailUid)]) || null;
-    const archFile = resolveBy(r, archiveIdx);
-    const flatFile = resolveBy(r, flatIdx);
+    const archFile = resolveArchive(r, archiveIdx);
+    const flatFile = resolveArchive(r, flatIdx);
     return {
       ...r,
       invoiceId: buildId(r),
