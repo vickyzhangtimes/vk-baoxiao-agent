@@ -1,8 +1,8 @@
-# 报销发票 Agent 架构
+# VK BaoXiao Agent 架构
 
 ## 边界
 
-本项目是一个本地优先的报销发票 Agent，也能作为 Codex、Claude Code、WorkBuddy 的 Skill 安装。Agent 负责输入路由、权限确认、视觉识别、异常处理和反馈回写；Node.js 流水线负责金额、合并、去重、归档、Excel 与看板等确定性计算。
+本项目是一个本地优先的VK BaoXiao Agent，也能作为 Codex、Claude Code、WorkBuddy 的 Skill 安装。Agent 负责输入路由、权限确认、视觉识别、异常处理和反馈回写；Node.js 流水线负责金额、合并、去重、归档、Excel 与看板等确定性计算。
 
 ```mermaid
 flowchart TD

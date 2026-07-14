@@ -1,8 +1,8 @@
 {
-    "name":  "reimbursement-invoice-agent",
+    "name":  "vk-baoxiao-agent",
     "version":  "2.0.0",
     "private":  true,
-    "description":  "本地优先的报销发票 Agent：统一处理邮箱、PDF 文件夹和图片输入，生成台账、报销单、归档与报销包。",
+    "description":  "VK BaoXiao Agent：本地优先的 AI 自动报销助手，处理邮箱、PDF 文件夹和图片输入，自动识别、计算、分类、填写报销单并导出完整报销包。",
     "main":  "agent-controller.js",
     "scripts":  {
                     "init":  "node scripts/init-local.js",
@@ -26,14 +26,18 @@
                     "feedback":  "node apply-feedback.js"
                 },
     "keywords":  [
-                     "invoice",
-                     "email",
-                     "imap",
-                     "codex-skill",
-                     "agentic-workflow",
+                     "ai-agent",
+                     "reimbursement",
+                     "invoice-automation",
+                     "expense-management",
+                     "excel",
+                     "pdf",
+                     "local-first",
+                     "baoxiao",
+                     "报销",
                      "发票"
                  ],
-    "author":  "Vicky（基于 aigc猎手竹相左边 的 MIT 上游版本）",
+    "author":  "Vicky / @vickyzhangtimes（VK Agent Lab；基于 aigc猎手竹相左边 的 MIT 上游版本）",
     "license":  "MIT",
     "engines":  {
                     "node":  "\u003e=18"
@@ -49,10 +53,14 @@
                      },
     "repository":  {
                        "type":  "git",
-                       "url":  "git+https://github.com/vickyzhangtimes/reimbursement-invoice-agent.git"
+                       "url":  "git+https://github.com/vickyzhangtimes/vk-baoxiao-agent.git"
                    },
-    "homepage":  "https://github.com/vickyzhangtimes/reimbursement-invoice-agent#readme",
+    "homepage":  "https://github.com/vickyzhangtimes/vk-baoxiao-agent#readme",
     "bugs":  {
-                 "url":  "https://github.com/vickyzhangtimes/reimbursement-invoice-agent/issues"
-             }
+                 "url":  "https://github.com/vickyzhangtimes/vk-baoxiao-agent/issues"
+             },
+    "overrides":  {
+                      "semver":  "5.7.2",
+                      "uuid":  "11.1.1"
+                  }
 }

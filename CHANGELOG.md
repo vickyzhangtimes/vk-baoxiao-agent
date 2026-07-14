@@ -18,10 +18,16 @@
 - 修复归档解析塌到第一份文件、扁平目录重复扫描、任一输出缺失却跳过重跑等问题。
 - 多段路线统一输出到 Excel、HTML、Markdown、看板和模板合同，并支持 `routeLegs` 人工修改。
 - 新增 12 个真实场景回归测试。
+### 品牌与可发现性
+- 产品名统一为 **VK BaoXiao Agent**，GitHub 仓库改为 `vk-baoxiao-agent`。
+- README 新增 Vicky 的 X 入口、VK Agent Lab 署名和 CI 状态徽章；看板与报销包说明增加克制的生成工具标识。
+- 包名、Skill 名、OpenAI display name、克隆地址和仓库元数据同步更新。
+
 ### 安全
 - IMAP 默认启用证书校验。
 - 邮件链接默认只允许公网 HTTPS，限制重定向、私网地址和响应大小。
 - 清理目录和模板目录增加路径越界守卫。
+- 使用 npm `overrides` 将 `semver` 固定到 `5.7.2`、`uuid` 固定到 `11.1.1`，在保持 Excel/IMAP 主依赖版本的情况下消除已知传递依赖漏洞；`npm audit` 为 0。
 
 ### 发布
 - Skill frontmatter 通过官方校验，新增 `agents/openai.yaml` 和 GitHub Actions CI。

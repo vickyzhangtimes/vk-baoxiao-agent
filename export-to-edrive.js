@@ -446,6 +446,7 @@ let originalsTotal = 0, originalsCount = 0;
 
 const noteTxt = [
   `报销包说明 · ${BATCH_DATE}（${PERIOD_LABEL}）`,
+  `生成工具：VK BaoXiao Agent`,
   `生成时间：${new Date().toLocaleString('zh-CN')}`,
   `数据标签：${SOURCE_NAME}`,
   ``,

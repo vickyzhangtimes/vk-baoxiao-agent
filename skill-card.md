@@ -4,7 +4,7 @@ This local-first reimbursement agent handles invoice email, PDF folders, and vis
 This skill is ready for commercial/non-commercial use. <br>
 
 ## Publisher: <br>
-Vicky (maintainer of this derivative) / [peter-zx](https://clawhub.ai/user/peter-zx) (upstream publisher) <br>
+[Vicky / @vickyzhangtimes](https://x.com/vickyzhangtimes) (VK Agent Lab, maintainer of this derivative) / [peter-zx](https://clawhub.ai/user/peter-zx) (upstream publisher) <br>
 
 ### License/Terms of Use: <br>
 MIT <br>

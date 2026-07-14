@@ -128,7 +128,7 @@ const html = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>报销数据看板 ${range}</title>
+<title>VK BaoXiao Agent · 报销数据看板 ${range}</title>
 <style>
   :root{ --bg:#f8fafc; --card:#fff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; }
   *{box-sizing:border-box}
@@ -164,7 +164,7 @@ const html = `<!DOCTYPE html>
 <div class="wrap">
   <header>
     <h1>报销数据看板</h1>
-    <div class="sub">区间 ${range} · 生成于 ${genAt}</div>
+    <div class="sub">VK BaoXiao Agent · 区间 ${range} · 生成于 ${genAt}</div>
   </header>
 
   <div class="cards">
